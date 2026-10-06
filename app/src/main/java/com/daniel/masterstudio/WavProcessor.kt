@@ -141,7 +141,8 @@ object Wav {
     }
     fun write24(f:File,sr:Int,ch:Int,x:FloatArray){
         DataOutputStream(BufferedOutputStream(FileOutputStream(f))).use { d ->val bytes=x.size*3
-            fun i(v:Int)=d.writeInt(Integer.reverseBytes(v));fun s(v:Int)=d.writeShort(java.lang.Short.reverseBytes(v.toShort()).toInt())
+            fun i(v:Int) { d.writeInt(Integer.reverseBytes(v)) }
+            fun s(v:Int) { d.writeShort(java.lang.Short.reverseBytes(v.toShort()).toInt()) }
             d.writeBytes("RIFF");i(36+bytes);d.writeBytes("WAVE");d.writeBytes("fmt ");i(16);s(1);s(ch);i(sr);i(sr*ch*3);s(ch*3);s(24);d.writeBytes("data");i(bytes)
             val rng=0x7FFFFF;for(v0 in x){val v=(v0.coerceIn(-1f,.9999999f)*rng).roundToInt();d.writeByte(v and 255);d.writeByte((v shr 8) and 255);d.writeByte((v shr 16) and 255)}
         }
