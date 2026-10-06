@@ -57,7 +57,7 @@ class MainActivity : Activity() {
 
         pick.setOnClickListener {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                type = "audio/wav"
+                type = "audio/*"
                 addCategory(Intent.CATEGORY_OPENABLE)
             }, REQUEST_OPEN)
         }
@@ -114,7 +114,7 @@ class MainActivity : Activity() {
         if (requestCode == REQUEST_OPEN && resultCode == RESULT_OK) {
             selected = data?.data
             masterButton.isEnabled = selected != null
-            status.text = if (selected != null) "WAV cargado. Selecciona perfil y MASTERIZAR." else "No se seleccionó ningún archivo."
+            status.text = if (selected != null) "Audio cargado. Selecciona perfil y MASTERIZAR." else "No se seleccionó ningún archivo."
         } else if (requestCode == REQUEST_SAVE && resultCode == RESULT_OK) {
             val uri = data?.data ?: return
             val file = mastered ?: return
