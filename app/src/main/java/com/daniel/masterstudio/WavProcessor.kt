@@ -41,13 +41,13 @@ data class Biquad(val b0:Float,val b1:Float,val b2:Float,val a1:Float,val a2:Flo
     companion object {
         private fun make(sr:Int,f:Float,q:Float,g:Float,type:Int):Biquad {
             val A=10f.pow(g/40f);val w=2f*PI.toFloat()*f/sr;val c=cos(w);val sn=sin(w);val alpha=sn/(2f*q)
-            val (b0,b1,b2,a0,a1,a2)=when(type){
+            val v = when(type){
                 0->floatArrayOf((1+c)/2f,-(1+c),(1+c)/2f,1+alpha,-2*c,1-alpha)
                 1->floatArrayOf((1-c)/2f,1-c,(1-c)/2f,1+alpha,-2*c,1-alpha)
                 2->{val beta=2f*sqrt(A)*alpha;floatArrayOf(1+beta,-2*c,1-beta,1+alpha/A,-2*c,1-alpha/A)}
                 else->{val beta=2f*sqrt(A)*alpha;floatArrayOf(A*((A+1)-(A-1)*c+beta),2*A*((A-1)-(A+1)*c),A*((A+1)-(A-1)*c-beta),(A+1)+(A-1)*c+beta,-2*((A-1)+(A+1)*c),(A+1)+(A-1)*c-beta)}
             }
-            return Biquad(b0/a0,b1/a0,b2/a0,a1/a0,a2/a0)
+            return Biquad(v[0]/v[3],v[1]/v[3],v[2]/v[3],v[4]/v[3],v[5]/v[3])
         }
         fun highPass(sr:Int,f:Float,q:Float)=make(sr,f,q,0f,0)
         fun lowPass(sr:Int,f:Float,q:Float)=make(sr,f,q,0f,1)
