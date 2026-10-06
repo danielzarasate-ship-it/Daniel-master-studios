@@ -33,7 +33,7 @@ class MainActivity : Activity() {
         root.addView(label("DANIEL MASTER STUDIO", 24f))
         root.addView(label("Mastering personal • voz clara • potencia • compatibilidad", 14f))
 
-        val pick = Button(this).apply { text = "SELECCIONAR WAV" }
+        val pick = Button(this).apply { text = "SELECCIONAR AUDIO" }
         root.addView(pick)
 
         profile = Spinner(this)
@@ -50,7 +50,7 @@ class MainActivity : Activity() {
         exportButton = Button(this).apply { text = "EXPORTAR WAV 24-BIT"; isEnabled = false }
         root.addView(exportButton)
 
-        status = label("Carga un WAV PCM para comenzar.", 14f)
+        status = label("Carga WAV, MP3, M4A u otro audio compatible para comenzar.", 14f)
         root.addView(status)
         root.addView(label("Cadena: limpieza → EQ tonal → de-esser → dinámica → estéreo → loudness → limiter", 12f))
         setContentView(root)
@@ -73,11 +73,12 @@ class MainActivity : Activity() {
 
         Thread {
             try {
-                val input = File(cacheDir, "input_${System.currentTimeMillis()}.wav")
+                val source = File(cacheDir, "source_" + System.currentTimeMillis())
                 contentResolver.openInputStream(uri)?.use { ins ->
-                    input.outputStream().use { outs -> ins.copyTo(outs) }
+                    source.outputStream().use { outs -> ins.copyTo(outs) }
                 } ?: error("No se pudo abrir el audio.")
-
+                val input = File(cacheDir, "decoded_" + System.currentTimeMillis() + ".wav")
+                AudioDecoder.decodeToWav(this, uri, input)
                 val output = File(cacheDir, "DanielMaster_${System.currentTimeMillis()}.wav")
                 val settings = Profiles.forName(profile.selectedItem.toString())
 
@@ -103,7 +104,7 @@ class MainActivity : Activity() {
     private fun saveMaster() {
         if (mastered == null) return
         startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-            type = "audio/wav"
+            type = "audio/*"
             putExtra(Intent.EXTRA_TITLE, "DanielMaster_${System.currentTimeMillis()}.wav")
             addCategory(Intent.CATEGORY_OPENABLE)
         }, REQUEST_SAVE)
