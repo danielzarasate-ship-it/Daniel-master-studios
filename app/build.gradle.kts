@@ -23,8 +23,8 @@ android {
             versionNameSuffix = "-debug"
         }
         release {
-            minifyEnabled = false
-            shrinkResources = false
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
