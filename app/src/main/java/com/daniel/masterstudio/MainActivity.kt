@@ -33,6 +33,9 @@ class MainActivity : Activity() {
     private lateinit var beatBass: SeekBar
     private lateinit var beatBrightness: SeekBar
     private var userSeeking = false
+    private lateinit var analysisCard: LinearLayout
+    private lateinit var analysisTitle: TextView
+    private lateinit var analysisDetails: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -93,6 +96,14 @@ class MainActivity : Activity() {
         timeLabel = text("00:00  /  00:00", 12f, Color.rgb(175, 160, 205)).apply { gravity = android.view.Gravity.CENTER }
         previewCard.addView(timeLabel); content.addView(previewCard)
 
+        analysisCard = card()
+        analysisTitle = text("📊  CONTROL DE ENTREGA", 16f, Color.rgb(210, 185, 255))
+        analysisCard.addView(analysisTitle)
+        analysisDetails = text("Aquí aparecerá una guía después de masterizar.", 12f, Color.rgb(185, 175, 210))
+        analysisCard.addView(analysisDetails)
+        analysisCard.visibility = View.GONE
+        content.addView(analysisCard)
+
         status = text("Carga una canción para comenzar.", 13f, Color.rgb(190, 180, 215)); content.addView(status)
         content.addView(text("✓ Limpieza  •  EQ  •  voz  •  dinámica  •  estéreo  •  loudness  •  limiter", 11f, Color.rgb(145, 130, 175)))
         root.addView(scroll, FrameLayout.LayoutParams(-1, -1).apply { setMargins(14, 24, 14, 10) })
@@ -141,7 +152,9 @@ class MainActivity : Activity() {
                 )
                 WavProcessor.master(input, output, settings) { p -> runOnUiThread { status.text = "⚡ Masterizando… " + p + "%" } }
                 mastered = output
+                val analysis = WavProcessor.analyze(output)
                 runOnUiThread {
+                    showAnalysis(analysis)
                     status.text = String.format(Locale.US, "✓ Master listo • WAV 24-bit • %s", profile.selectedItem.toString())
                     masterButton.isEnabled = true; exportButton.isEnabled = true; originalButton.isEnabled = true; masterPreviewButton.isEnabled = true; seek.isEnabled = true
                 }
@@ -150,6 +163,26 @@ class MainActivity : Activity() {
             }
         }.start()
     }
+
+    private fun showAnalysis(a: MasterAnalysis) {
+        analysisCard.visibility = View.VISIBLE
+        val ready = a.readyForDistribution
+        analysisTitle.text = if (ready) "🟢  LISTA PARA DISTRIBUCIÓN" else "🟠  REVISAR ANTES DE EXPORTAR"
+        val lines = mutableListOf<String>()
+        lines.add(if (a.clippedSamples == 0L) "✓ Sin clipping digital detectado" else "✕ Hay ${a.clippedSamples} muestras al límite: revisa la mezcla")
+        lines.add(if (a.peakDbfs <= -1.0f) "✓ Pico máximo ${fmtDb(a.peakDbfs)} dBFS — margen seguro" else "✕ Pico máximo ${fmtDb(a.peakDbfs)} dBFS — demasiado alto")
+        lines.add(if (a.rmsDbfs in -20f..-8f) "✓ Nivel medio ${fmtDb(a.rmsDbfs)} dBFS — rango saludable" else if (a.rmsDbfs > -8f) "⚠ Nivel medio ${fmtDb(a.rmsDbfs)} dBFS — puede estar demasiado comprimido/fuerte" else "⚠ Nivel medio ${fmtDb(a.rmsDbfs)} dBFS — puede estar bajo")
+        lines.add(if (a.dynamicRangeDb >= 6f) "✓ Dinámica ${String.format(Locale.US, "%.1f", a.dynamicRangeDb)} dB — conserva movimiento" else "⚠ Dinámica ${String.format(Locale.US, "%.1f", a.dynamicRangeDb)} dB — escucha si quedó demasiado aplastada")
+        lines.add(if (a.sampleRate >= 44100) "✓ ${a.sampleRate} Hz • WAV 24-bit" else "⚠ ${a.sampleRate} Hz — se recomienda trabajar a 44.1/48 kHz o superior")
+        lines.add("")
+        lines.add("🎧 TRADUCCIÓN A DISPOSITIVOS")
+        lines.add(if (a.readyForDistribution) "✓ Base segura para audífonos, celular, carro y estéreo." else "⚠ Corrige los puntos marcados antes de darlo por terminado.")
+        lines.add("💡 Guía: compara A/B a volumen parecido y escucha voz, bajo y agudos en audífonos + celular + carro/estéreo.")
+        lines.add("ℹ El análisis es una guía técnica; no garantiza idéntica reproducción en todos los equipos.")
+        analysisDetails.text = lines.joinToString("\n")
+    }
+
+    private fun fmtDb(v: Float): String = String.format(Locale.US, "%.1f", v)
 
     private fun togglePreview(master: Boolean) {
         val file = if (master) mastered else decodedOriginal
@@ -199,6 +232,7 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_OPEN && resultCode == RESULT_OK) {
             selected = data?.data; mastered = null; decodedOriginal = null; exportButton.isEnabled = false; masterPreviewButton.isEnabled = false
+            if (::analysisCard.isInitialized) analysisCard.visibility = View.GONE
             originalButton.isEnabled = selected != null; masterButton.isEnabled = selected != null
             status.text = if (selected != null) "✓ Audio cargado. Presiona MASTERIZAR." else "No se seleccionó ningún archivo."
         } else if (requestCode == REQUEST_SAVE && resultCode == RESULT_OK) {
