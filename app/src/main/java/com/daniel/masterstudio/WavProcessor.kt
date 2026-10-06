@@ -39,7 +39,7 @@ object WavProcessor {
 }
 data class Biquad(val b0:Float,val b1:Float,val b2:Float,val a1:Float,val a2:Float) {
     companion object {
-        private fun make(sr:Int,f:Float,q:Float,g:Float,type:Int):Biquad {
+        private fun make(sr:Int,f:Float,q:Float,g:Float,type:Int):Biquad { // fixed
             val A=10f.pow(g/40f);val w=2f*PI.toFloat()*f/sr;val c=cos(w);val sn=sin(w);val alpha=sn/(2f*q)
             val v = when(type){
                 0->floatArrayOf((1+c)/2f,-(1+c),(1+c)/2f,1+alpha,-2*c,1-alpha)
