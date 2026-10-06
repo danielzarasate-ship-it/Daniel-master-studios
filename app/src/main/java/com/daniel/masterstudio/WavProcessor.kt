@@ -10,8 +10,28 @@ data class MasterSettings(
     val compThresholdDb: Float = -18f, val deEss: Float = .35f, val stereoWidth: Float = 1.03f
 )
 data class WavData(val sampleRate:Int,val channels:Int,val samples:FloatArray,val bits:Int)
+data class MasterAnalysis(val sampleRate:Int,val channels:Int,val bits:Int,val peakDbfs:Float,val rmsDbfs:Float,val dynamicRangeDb:Float,val clippedSamples:Long,val readyForDistribution:Boolean)
 
 object WavProcessor {
+    fun analyze(input:File): MasterAnalysis {
+        val w=Wav.read(input)
+        var peak=0f
+        var sum=0.0
+        var clipped=0L
+        for (v in w.samples) {
+            val a=abs(v)
+            if (a>peak) peak=a
+            sum += v.toDouble()*v.toDouble()
+            if (a >= 0.9995f) clipped++
+        }
+        val rms=sqrt(sum/max(1,w.samples.size).toDouble()).toFloat()
+        val peakDb=(20f*log10(max(peak,1e-9f)))
+        val rmsDb=(20f*log10(max(rms,1e-9f)))
+        val dynamic=(peakDb-rmsDb).coerceAtLeast(0f)
+        val ready=peakDb <= -1.0f && clipped==0L && rmsDb in -20f..-8f && dynamic >= 6f && w.sampleRate >= 44100
+        return MasterAnalysis(w.sampleRate,w.channels,w.bits,peakDb,rmsDb,dynamic,clipped,ready)
+    }
+
     fun master(input:File, output:File, s:MasterSettings, progress:(Int)->Unit) {
         val w=Wav.read(input)
         require(w.channels in 1..2) { "Solo se admiten WAV mono o estéreo." }
