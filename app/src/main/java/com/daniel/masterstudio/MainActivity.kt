@@ -1,10 +1,9 @@
 package com.daniel.masterstudio
 
-import android.app.*
+import android.app.Activity
 import android.os.Bundle
-import android.content.*
+import android.content.Intent
 import android.net.Uri
-import android.view.Gravity
 import android.widget.*
 import java.io.File
 
@@ -16,49 +15,97 @@ class MainActivity : Activity() {
     private lateinit var exportButton: Button
     private lateinit var profile: Spinner
 
-    override fun onCreate(b: Bundle?) {
-        super.onCreate(b)
-        val root = LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(28,28,28,28); setBackgroundColor(0xFF09090B.toInt()) }
-        fun tv(t:String,size:Float)=TextView(this).apply { text=t; textSize=size; setTextColor(0xFFFFFFFF.toInt()); setPadding(0,8,0,8) }
-        root.addView(tv("DANIEL MASTER STUDIO",24f))
-        root.addView(tv("Motor de mastering • voz clara • potencia • compatibilidad",14f).apply { setTextColor(0xFFB8B8C2.toInt()) })
-        val pick=Button(this).apply{text="SELECCIONAR AUDIO"}; root.addView(pick)
-        profile=Spinner(this); profile.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("Automático / Equilibrado","Corrido tumbado","Rap / Trap","Reguetón","Cumbia","Pop / Urbano")); root.addView(profile)
-        masterButton=Button(this).apply{text="MASTERIZAR";isEnabled=false}; root.addView(masterButton)
-        exportButton=Button(this).apply{text="EXPORTAR WAV 24-BIT";isEnabled=false}; root.addView(exportButton)
-        status=tv("Carga una canción WAV PCM para comenzar.",14f); root.addView(status)
-        root.addView(tv("Cadena: subsonic → EQ dinámica → de-esser → multibanda → imagen estéreo → bus → loudness → true-peak limiter",12f).apply{setTextColor(0xFF8E8E98.toInt())})
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(28, 28, 28, 28)
+            setBackgroundColor(0xFF09090B.toInt())
+        }
+        fun label(text: String, size: Float) = TextView(this).apply {
+            this.text = text; textSize = size
+            setTextColor(0xFFFFFFFF.toInt()); setPadding(0, 8, 0, 8)
+        }
+        root.addView(label("DANIEL MASTER STUDIO", 24f))
+        root.addView(label("Motor de mastering • voz clara • potencia • compatibilidad", 14f))
+        val pick = Button(this).apply { text = "SELECCIONAR AUDIO" }
+        root.addView(pick)
+        profile = Spinner(this)
+        profile.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
+            listOf("Automático / Equilibrado","Corrido tumbado","Rap / Trap","Reguetón","Cumbia","Pop / Urbano"))
+        root.addView(profile)
+        masterButton = Button(this).apply { text = "MASTERIZAR"; isEnabled = false }
+        root.addView(masterButton)
+        exportButton = Button(this).apply { text = "EXPORTAR WAV 24-BIT"; isEnabled = false }
+        root.addView(exportButton)
+        status = label("Carga una canción WAV PCM para comenzar.", 14f)
+        root.addView(status)
+        root.addView(label("Cadena: subsonic → EQ → de-esser → multibanda → estéreo → bus → loudness → limiter", 12f))
         setContentView(root)
-        pick.setOnClickListener { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{type="audio/wav";addCategory(Intent.CATEGORY_OPENABLE}},10) }
+
+        pick.setOnClickListener {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                type = "audio/wav"; addCategory(Intent.CATEGORY_OPENABLE)
+            }, REQUEST_OPEN)
+        }
         masterButton.setOnClickListener { runMaster() }
         exportButton.setOnClickListener { saveMaster() }
     }
-    private fun runMaster(){
-        val u=selected ?: return
-        masterButton.isEnabled=false; exportButton.isEnabled=false; status.text="Analizando mezcla…"
+
+    private fun runMaster() {
+        val uri = selected ?: return
+        masterButton.isEnabled = false; exportButton.isEnabled = false
+        status.text = "Analizando mezcla…"
         Thread {
             try {
-                val input=File(cacheDir,"input_${System.currentTimeMillis()}.wav")
-                contentResolver.openInputStream(u)!!.use{ins->input.outputStream().use{outs->ins.copyTo(outs)}}
-                val out=File(cacheDir,"DanielMaster_${System.currentTimeMillis()}.wav")
-                val settings=Profiles.forName(profile.selectedItem.toString())
-                WavProcessor.master(input,out,settings){p->runOnUiThread{status.text="Masterizando… $p%"}}
-                mastered=out
-                runOnUiThread{status.text="Master terminado. WAV 24-bit listo.";masterButton.isEnabled=true;exportButton.isEnabled=true}
-            }catch(e:Exception){runOnUiThread{status.text="No se pudo procesar: ${e.message}";masterButton.isEnabled=true}}
+                val input = File(cacheDir, "input_${System.currentTimeMillis()}.wav")
+                contentResolver.openInputStream(uri)?.use { ins ->
+                    input.outputStream().use { outs -> ins.copyTo(outs) }
+                } ?: error("No se pudo abrir el audio.")
+                val output = File(cacheDir, "DanielMaster_${System.currentTimeMillis()}.wav")
+                val settings = Profiles.forName(profile.selectedItem.toString())
+                WavProcessor.master(input, output, settings) { p ->
+                    runOnUiThread { status.text = "Masterizando… $p%" }
+                }
+                mastered = output
+                runOnUiThread {
+                    status.text = "Master terminado. WAV 24-bit listo."
+                    masterButton.isEnabled = true; exportButton.isEnabled = true
+                }
+            } catch (e: Exception) {
+                runOnUiThread { status.text = "No se pudo procesar: ${e.message}"; masterButton.isEnabled = true }
+            }
         }.start()
     }
-    private fun saveMaster(){
-        val f=mastered ?: return
-        startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply{type="audio/wav";putExtra(Intent.EXTRA_TITLE,"DanielMaster.wav");addCategory(Intent.CATEGORY_OPENABLE)},20)
+
+    private fun saveMaster() {
+        if (mastered == null) return
+        startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            type = "audio/wav"; putExtra(Intent.EXTRA_TITLE, "DanielMaster.wav")
+            addCategory(Intent.CATEGORY_OPENABLE)
+        }, REQUEST_SAVE)
     }
-    override fun onActivityResult(r:Int,c:Int,d:Intent?){
-        super.onActivityResult(r,c,d)
-        if(r==10&&c==RESULT_OK){selected=d?.data;masterButton.isEnabled=selected!=null;status.text="Audio cargado. Selecciona perfil y MASTERIZAR."}
-        if(r==20&&c==RESULT_OK){
-            val uri=d?.data ?: return; val f=mastered ?: return
-            try{contentResolver.openOutputStream(uri)!!.use{out->f.inputStream().use{ins->ins.copyTo(out)}};status.text="Exportación completada."}
-            catch(e:Exception){status.text="Error al exportar: ${e.message}"}
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_OPEN && resultCode == RESULT_OK) {
+            selected = data?.data
+            masterButton.isEnabled = selected != null
+            status.text = "Audio cargado. Selecciona perfil y MASTERIZAR."
+        } else if (requestCode == REQUEST_SAVE && resultCode == RESULT_OK) {
+            val uri = data?.data ?: return
+            val file = mastered ?: return
+            try {
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    file.inputStream().use { ins -> ins.copyTo(out) }
+                } ?: error("No se pudo crear el archivo.")
+                status.text = "Exportación completada."
+            } catch (e: Exception) { status.text = "Error al exportar: ${e.message}" }
         }
+    }
+
+    companion object {
+        private const val REQUEST_OPEN = 10
+        private const val REQUEST_SAVE = 20
     }
 }
