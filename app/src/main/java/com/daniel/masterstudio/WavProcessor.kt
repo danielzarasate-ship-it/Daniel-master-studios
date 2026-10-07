@@ -38,23 +38,38 @@ object WavProcessor {
         require(w.sampleRate in 8000..192000) { "Frecuencia de muestreo no compatible." }
         val x=w.samples; val sr=w.sampleRate
         progress(5)
-        filter(x,w.channels,Biquad.highPass(sr,s.hpHz,.707f))
-        filter(x,w.channels,Biquad.peaking(sr,250f,.75f,s.mudDb*s.intensity))
-        filter(x,w.channels,Biquad.peaking(sr,3200f,.9f,s.presenceDb*s.intensity))
-        filter(x,w.channels,Biquad.highShelf(sr,10500f,.65f,s.airDb*s.intensity)); progress(20)
-        DeEsser.process(x,sr,w.channels,s.deEss*s.intensity); progress(32)
-        Multiband.process(x,sr,w.channels,s.intensity); progress(46)
-        if(w.channels==2) Stereo.process(x,s.stereoWidth); progress(56)
-        BusCompressor.process(x,sr,s.compThresholdDb,s.compRatio,.55f+.35f*s.intensity); progress(68)
-        val measured=Loudness.kWeightedDb(x,sr,w.channels)
+        processSamples(x, sr, w.channels, s); progress(94)
+        Wav.write24(output,sr,w.channels,x); progress(100)
+    }
+    fun masterPreview(input:File, output:File, s:MasterSettings, positionSec:Float) {
+        val w=Wav.read(input)
+        require(w.channels in 1..2) { "Solo se admiten WAV mono o estéreo." }
+        val sr=w.sampleRate
+        val start=((positionSec-1f).coerceAtLeast(0f)*sr*w.channels).toInt().coerceIn(0,w.samples.size)
+        val end=(start+10f*sr*w.channels).toInt().coerceAtMost(w.samples.size)
+        require(end>start) { "No hay suficiente audio para el preview." }
+        val x=w.samples.copyOfRange(start,end)
+        processSamples(x,sr,w.channels,s)
+        Wav.write24(output,sr,w.channels,x)
+    }
+
+    private fun processSamples(x:FloatArray,sr:Int,ch:Int,s:MasterSettings) {
+        filter(x,ch,Biquad.highPass(sr,s.hpHz,.707f))
+        filter(x,ch,Biquad.peaking(sr,250f,.75f,s.mudDb*s.intensity))
+        filter(x,ch,Biquad.peaking(sr,3200f,.9f,s.presenceDb*s.intensity))
+        filter(x,ch,Biquad.highShelf(sr,10500f,.65f,s.airDb*s.intensity))
+        DeEsser.process(x,sr,ch,s.deEss*s.intensity)
+        Multiband.process(x,sr,ch,s.intensity)
+        if(ch==2) Stereo.process(x,s.stereoWidth)
+        BusCompressor.process(x,sr,s.compThresholdDb,s.compRatio,.55f+.35f*s.intensity)
+        val measured=Loudness.kWeightedDb(x,sr,ch)
         val gainDb=((s.targetLufs-measured)*.82f).coerceIn(-2.0f,5.0f)
         val gain=10f.pow(gainDb/20f)
         for(i in x.indices) x[i]*=gain
-        progress(78)
         SoftClip.process(x,.985f)
-        TruePeakLimiter.process(x,sr,w.channels,s.ceilingDbtp); progress(94)
-        Wav.write24(output,sr,w.channels,x); progress(100)
+        TruePeakLimiter.process(x,sr,ch,s.ceilingDbtp)
     }
+
     private fun filter(x:FloatArray,ch:Int,b:Biquad) {
         val z1=FloatArray(ch); val z2=FloatArray(ch)
         for(i in x.indices){val c=i%ch;val v=x[i];val y=b.b0*v+z1[c];z1[c]=b.b1*v-b.a1*y+z2[c];z2[c]=b.b2*v-b.a2*y;x[i]=y}
