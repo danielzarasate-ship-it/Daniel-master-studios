@@ -36,6 +36,9 @@ class MainActivity : Activity() {
     private lateinit var analysisCard: LinearLayout
     private lateinit var analysisTitle: TextView
     private lateinit var analysisDetails: TextView
+    private lateinit var livePreviewButton: Button
+    private var livePreviewEnabled = false
+    private var previewToken = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -104,6 +107,17 @@ class MainActivity : Activity() {
         analysisCard.visibility = View.GONE
         content.addView(analysisCard)
 
+        val monitorCard = card()
+        monitorCard.addView(text("🎚️  MONITOR DE AJUSTES", 16f, Color.rgb(210, 185, 255)))
+        livePreviewButton = Button(this).apply {
+            text = "🔊  ACTIVAR PREVIEW DE AJUSTES"
+            isAllCaps = false
+            isEnabled = false
+        }
+        monitorCard.addView(livePreviewButton)
+        monitorCard.addView(text("Al mover VOZ/BEAT se renderiza un fragmento real con el mismo motor de master.", 11f, Color.rgb(170, 158, 198)))
+        content.addView(monitorCard)
+
         status = text("Carga una canción para comenzar.", 13f, Color.rgb(190, 180, 215)); content.addView(status)
         content.addView(text("✓ Limpieza  •  EQ  •  voz  •  dinámica  •  estéreo  •  loudness  •  limiter", 11f, Color.rgb(145, 130, 175)))
         root.addView(scroll, FrameLayout.LayoutParams(-1, -1).apply { setMargins(14, 24, 14, 10) })
@@ -111,9 +125,25 @@ class MainActivity : Activity() {
 
         pick.setOnClickListener { stopPlayer(); startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type = "audio/*"; addCategory(Intent.CATEGORY_OPENABLE) }, REQUEST_OPEN) }
         masterButton.setOnClickListener { runMaster() }
+        profile.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) { if (livePreviewEnabled) scheduleLivePreview() }
+        }
         exportButton.setOnClickListener { saveMaster() }
+        livePreviewButton.setOnClickListener { toggleLivePreview() }
         originalButton.setOnClickListener { togglePreview(false) }
         masterPreviewButton.setOnClickListener { togglePreview(true) }
+        val previewBars = listOf(voiceClarity, voiceAir, beatBass, beatBrightness)
+        previewBars.forEach { bar ->
+            bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onStartTrackingTouch(s: SeekBar) {}
+                override fun onStopTrackingTouch(s: SeekBar) {}
+                override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
+                    if (fromUser && livePreviewEnabled) scheduleLivePreview()
+                }
+            })
+        }
+
         seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onStartTrackingTouch(s: SeekBar) { userSeeking = true }
             override fun onStopTrackingTouch(s: SeekBar) { userSeeking = false; player?.let { if (it.duration > 0) it.seekTo((it.duration * s.progress) / 1000) } }
@@ -142,21 +172,14 @@ class MainActivity : Activity() {
                 val input = File(cacheDir, "decoded_" + System.currentTimeMillis() + ".wav")
                 AudioDecoder.decodeToWav(this, uri, input); decodedOriginal = input
                 val output = File(cacheDir, "DanielMaster_" + System.currentTimeMillis() + ".wav")
-                var settings = Profiles.forName(profile.selectedItem.toString())
-                fun delta(bar: SeekBar, range: Float): Float = ((bar.progress - 50) / 50f) * range
-                settings = settings.copy(
-                    presenceDb = settings.presenceDb + delta(voiceClarity, 1.5f),
-                    airDb = settings.airDb + delta(voiceAir, 1.5f),
-                    lowShelfDb = settings.lowShelfDb + delta(beatBass, 1.5f),
-                    mudDb = settings.mudDb + delta(beatBrightness, 1.0f)
-                )
+                val settings = currentSettings()
                 WavProcessor.master(input, output, settings) { p -> runOnUiThread { status.text = "⚡ Masterizando… " + p + "%" } }
                 mastered = output
                 val analysis = WavProcessor.analyze(output)
                 runOnUiThread {
                     showAnalysis(analysis)
                     status.text = String.format(Locale.US, "✓ Master listo • WAV 24-bit • %s", profile.selectedItem.toString())
-                    masterButton.isEnabled = true; exportButton.isEnabled = true; originalButton.isEnabled = true; masterPreviewButton.isEnabled = true; seek.isEnabled = true
+                    masterButton.isEnabled = true; exportButton.isEnabled = true; originalButton.isEnabled = true; masterPreviewButton.isEnabled = true; seek.isEnabled = true; livePreviewButton.isEnabled = true
                 }
             } catch (e: Exception) {
                 runOnUiThread { status.text = "✕ No se pudo procesar: " + e.message; masterButton.isEnabled = true }
@@ -183,6 +206,52 @@ class MainActivity : Activity() {
     }
 
     private fun fmtDb(v: Float): String = String.format(Locale.US, "%.1f", v)
+    private fun toggleLivePreview() {
+        livePreviewEnabled = !livePreviewEnabled
+        livePreviewButton.text = if (livePreviewEnabled) "⏹  DETENER PREVIEW DE AJUSTES" else "🔊  ACTIVAR PREVIEW DE AJUSTES"
+        if (livePreviewEnabled) scheduleLivePreview() else { stopPlayer(); status.text = "Monitor de ajustes detenido." }
+    }
+
+    private fun scheduleLivePreview() {
+        val token = ++previewToken
+        livePreviewButton.isEnabled = false
+        status.text = "🎚️ Preparando preview de ajustes…"
+        Thread {
+            try {
+                val source = decodedOriginal ?: run {
+                    val uri = selected ?: return@Thread
+                    val f = File(cacheDir, "preview_source_" + System.currentTimeMillis() + ".wav")
+                    AudioDecoder.decodeToWav(this, uri, f); decodedOriginal = f; f
+                }
+                val positionSec = (player?.currentPosition ?: 0) / 1000f
+                val out = File(cacheDir, "live_preview_" + token + ".wav")
+                WavProcessor.masterPreview(source, out, currentSettings(), positionSec)
+                if (!livePreviewEnabled || token != previewToken) return@Thread
+                runOnUiThread {
+                    try {
+                        stopPlayer()
+                        val mp = MediaPlayer().apply { setDataSource(out.absolutePath); prepare(); start() }
+                        player = mp
+                        mp.setOnCompletionListener { if (livePreviewEnabled) scheduleLivePreview() }
+                        livePreviewButton.isEnabled = true
+                        status.text = "🔊 PREVIEW ACTIVO • fragmento real con el motor de master"
+                    } catch (e: Exception) { livePreviewButton.isEnabled = true; status.text = "No se pudo reproducir preview: " + e.message }
+                }
+            } catch (e: Exception) { runOnUiThread { livePreviewButton.isEnabled = true; status.text = "No se pudo generar preview: " + e.message } }
+        }.start()
+    }
+
+    private fun currentSettings(): MasterSettings {
+        val s = Profiles.forName(profile.selectedItem.toString())
+        fun delta(bar: SeekBar, range: Float): Float = ((bar.progress - 50) / 50f) * range
+        return s.copy(
+            presenceDb = s.presenceDb + delta(voiceClarity, 1.5f),
+            airDb = s.airDb + delta(voiceAir, 1.5f),
+            lowShelfDb = s.lowShelfDb + delta(beatBass, 1.5f),
+            mudDb = s.mudDb + delta(beatBrightness, 1.0f)
+        )
+    }
+
 
     private fun togglePreview(master: Boolean) {
         val file = if (master) mastered else decodedOriginal
@@ -231,7 +300,7 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_OPEN && resultCode == RESULT_OK) {
-            selected = data?.data; mastered = null; decodedOriginal = null; exportButton.isEnabled = false; masterPreviewButton.isEnabled = false
+            selected = data?.data; mastered = null; decodedOriginal = null; exportButton.isEnabled = false; masterPreviewButton.isEnabled = false; livePreviewButton.isEnabled = false; livePreviewEnabled = false
             if (::analysisCard.isInitialized) analysisCard.visibility = View.GONE
             originalButton.isEnabled = selected != null; masterButton.isEnabled = selected != null
             status.text = if (selected != null) "✓ Audio cargado. Presiona MASTERIZAR." else "No se seleccionó ningún archivo."
