@@ -153,6 +153,67 @@ object TruePeakLimiter {
         }
     }
 }
+
+class RealtimeMaster(private val sampleRate: Int, private val channels: Int, initial: MasterSettings) {
+    @Volatile private var settings: MasterSettings = initial
+    private val hp = BiquadRuntime(sampleRate, channels)
+    private val mud = BiquadRuntime(sampleRate, channels)
+    private val presence = BiquadRuntime(sampleRate, channels)
+    private val air = BiquadRuntime(sampleRate, channels)
+    private var env = 0f
+    private var gain = 1f
+
+    fun setSettings(s: MasterSettings) { settings = s }
+
+    fun process(x: FloatArray) {
+        val s = settings
+        hp.set(Biquad.highPass(sampleRate, s.hpHz, .707f))
+        mud.set(Biquad.peaking(sampleRate, 250f, .75f, s.mudDb * s.intensity))
+        presence.set(Biquad.peaking(sampleRate, 3200f, .9f, s.presenceDb * s.intensity))
+        air.set(Biquad.highShelf(sampleRate, 10500f, .65f, s.airDb * s.intensity))
+        hp.process(x); mud.process(x); presence.process(x); air.process(x)
+
+        val threshold = 10f.pow(s.compThresholdDb / 20f)
+        val ratio = s.compRatio.coerceAtLeast(1f)
+        val attack = exp(-1f / (.018f * sampleRate))
+        val release = exp(-1f / (.18f * sampleRate))
+        val ceiling = 10f.pow(s.ceilingDbtp / 20f)
+
+        for (i in x.indices) {
+            val v = x[i]
+            val m = abs(v)
+            env = if (m > env) attack * env + (1f - attack) * m else release * env + (1f - release) * m
+            if (env > threshold) {
+                val over = 20f * log10(env / threshold)
+                val gr = over - over / ratio
+                x[i] *= 10f.pow(-gr * (.45f + .35f * s.intensity) / 20f)
+            }
+            val wanted = if (abs(x[i]) > ceiling) ceiling / abs(x[i]) else 1f
+            gain = if (wanted < gain) wanted else .9975f * gain + .0025f
+            x[i] = (x[i] * gain).coerceIn(-ceiling, ceiling)
+        }
+    }
+}
+
+private class BiquadRuntime(private val sampleRate: Int, private val channels: Int) {
+    private var b = Biquad.highPass(sampleRate, 28f, .707f)
+    private val z1 = FloatArray(channels)
+    private val z2 = FloatArray(channels)
+
+    fun set(next: Biquad) { b = next }
+
+    fun process(x: FloatArray) {
+        for (i in x.indices) {
+            val c = i % channels
+            val v = x[i]
+            val y = b.b0 * v + z1[c]
+            z1[c] = b.b1 * v - b.a1 * y + z2[c]
+            z2[c] = b.b2 * v - b.a2 * y
+            x[i] = y
+        }
+    }
+}
+
 object Wav {
     fun read(f:File):WavData {
         DataInputStream(BufferedInputStream(FileInputStream(f))).use { d ->
