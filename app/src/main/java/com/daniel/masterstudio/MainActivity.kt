@@ -9,6 +9,9 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
 import android.media.MediaPlayer
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioTrack
 import android.view.View
 import android.widget.*
 import java.io.File
@@ -39,6 +42,10 @@ class MainActivity : Activity() {
     private lateinit var livePreviewButton: Button
     private var livePreviewEnabled = false
     private var previewToken = 0
+    @Volatile private var realtimeRunning = false
+    private var realtimeTrack: AudioTrack? = null
+    private var realtimeThread: Thread? = null
+    @Volatile private var realtimeSettings: MasterSettings? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -127,7 +134,7 @@ class MainActivity : Activity() {
         masterButton.setOnClickListener { runMaster() }
         profile.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) { if (livePreviewEnabled) scheduleLivePreview() }
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) { if (livePreviewEnabled) realtimeSettings = currentSettings() }
         }
         exportButton.setOnClickListener { saveMaster() }
         livePreviewButton.setOnClickListener { toggleLivePreview() }
@@ -147,7 +154,7 @@ class MainActivity : Activity() {
         bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onStartTrackingTouch(s: SeekBar) {}
             override fun onStopTrackingTouch(s: SeekBar) {}
-            override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) { label.text = name + "  " + p + "%"; if (fromUser && livePreviewEnabled) scheduleLivePreview() }
+            override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) { label.text = name + "  " + p + "%"; if (fromUser && livePreviewEnabled) realtimeSettings = currentSettings() }
         })
         row.addView(label); row.addView(bar); parent.addView(row); return bar
     }
@@ -197,37 +204,70 @@ class MainActivity : Activity() {
     private fun fmtDb(v: Float): String = String.format(Locale.US, "%.1f", v)
     private fun toggleLivePreview() {
         livePreviewEnabled = !livePreviewEnabled
-        livePreviewButton.text = if (livePreviewEnabled) "⏹  DETENER PREVIEW DE AJUSTES" else "🔊  ACTIVAR PREVIEW DE AJUSTES"
-        if (livePreviewEnabled) scheduleLivePreview() else { stopPlayer(); status.text = "Monitor de ajustes detenido." }
+        livePreviewButton.text = if (livePreviewEnabled) "⏹  DETENER PREVIEW EN TIEMPO REAL" else "🔊  ACTIVAR PREVIEW EN TIEMPO REAL"
+        if (livePreviewEnabled) startRealtimePreview() else stopRealtimePreview()
     }
 
-    private fun scheduleLivePreview() {
-        val token = ++previewToken
-        livePreviewButton.isEnabled = false
-        status.text = "🎚️ Preparando preview de ajustes…"
-        Thread {
+    private fun startRealtimePreview() {
+        val source = decodedOriginal ?: run {
+            status.text = "Primero carga y masteriza el audio."
+            livePreviewEnabled = false
+            livePreviewButton.text = "🔊  ACTIVAR PREVIEW EN TIEMPO REAL"
+            return
+        }
+        stopPlayer()
+        realtimeRunning = true
+        realtimeSettings = currentSettings()
+        livePreviewButton.isEnabled = true
+        status.text = "🔊 PREVIEW EN TIEMPO REAL • mueve VOZ/BEAT mientras escuchas"
+        realtimeThread = Thread {
             try {
-                val source = decodedOriginal ?: run {
-                    val uri = selected ?: return@Thread
-                    val f = File(cacheDir, "preview_source_" + System.currentTimeMillis() + ".wav")
-                    AudioDecoder.decodeToWav(this, uri, f); decodedOriginal = f; f
+                val w = Wav.read(source)
+                val sr = w.sampleRate
+                val ch = w.channels
+                require(ch in 1..2)
+                val minBuf = AudioTrack.getMinBufferSize(sr, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT)
+                val bufferBytes = (minBuf.coerceAtLeast(sr * ch * 2 / 4)).coerceAtLeast(4096)
+                val track = AudioTrack(AudioManager.STREAM_MUSIC, sr, if (ch == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO,
+                    AudioFormat.ENCODING_PCM_16BIT, bufferBytes, AudioTrack.MODE_STREAM)
+                realtimeTrack = track
+                val engine = RealtimeMaster(sr, ch, currentSettings())
+                track.play()
+                val chunkFrames = 1024
+                val chunk = FloatArray(chunkFrames * ch)
+                val pcm = ShortArray(chunkFrames * ch)
+                var pos = 0
+                while (realtimeRunning && pos < w.samples.size) {
+                    val n = minOf(chunk.size, w.samples.size - pos)
+                    java.lang.System.arraycopy(w.samples, pos, chunk, 0, n)
+                    if (n < chunk.size) java.util.Arrays.fill(chunk, n, chunk.size, 0f)
+                    engine.setSettings(realtimeSettings ?: currentSettings())
+                    engine.process(chunk)
+                    for (i in pcm.indices) pcm[i] = (chunk[i].coerceIn(-1f, .999969f) * 32767f).toInt().toShort()
+                    track.write(pcm, 0, n)
+                    pos += n
                 }
-                val positionSec = (player?.currentPosition ?: 0) / 1000f
-                val out = File(cacheDir, "live_preview_" + token + ".wav")
-                WavProcessor.masterPreview(source, out, currentSettings(), positionSec)
-                if (!livePreviewEnabled || token != previewToken) return@Thread
-                runOnUiThread {
-                    try {
-                        stopPlayer()
-                        val mp = MediaPlayer().apply { setDataSource(out.absolutePath); prepare(); start() }
-                        player = mp
-                        mp.setOnCompletionListener { if (livePreviewEnabled) scheduleLivePreview() }
-                        livePreviewButton.isEnabled = true
-                        status.text = "🔊 PREVIEW ACTIVO • fragmento real con el motor de master"
-                    } catch (e: Exception) { livePreviewButton.isEnabled = true; status.text = "No se pudo reproducir preview: " + e.message }
-                }
-            } catch (e: Exception) { runOnUiThread { livePreviewButton.isEnabled = true; status.text = "No se pudo generar preview: " + e.message } }
-        }.start()
+                try { track.stop() } catch (_: Exception) {}
+                track.release()
+                realtimeTrack = null
+                if (realtimeRunning) runOnUiThread { status.text = "✓ PREVIEW TERMINADO • vuelve a activarlo para escuchar otra vez" }
+            } catch (e: Exception) {
+                realtimeTrack?.let { try { it.release() } catch (_: Exception) {} }
+                realtimeTrack = null
+                if (realtimeRunning) runOnUiThread { status.text = "No se pudo reproducir en tiempo real: " + e.message }
+            }
+            realtimeRunning = false
+        }.also { it.start() }
+    }
+
+    private fun stopRealtimePreview() {
+        realtimeRunning = false
+        try { realtimeTrack?.pause() } catch (_: Exception) {}
+        try { realtimeTrack?.flush() } catch (_: Exception) {}
+        try { realtimeTrack?.release() } catch (_: Exception) {}
+        realtimeTrack = null
+        realtimeThread = null
+        status.text = "Monitor en tiempo real detenido."
     }
 
     private fun currentSettings(): MasterSettings {
@@ -300,7 +340,7 @@ class MainActivity : Activity() {
         }
     }
 
-    override fun onDestroy() { stopPlayer(); super.onDestroy() }
+    override fun onDestroy() { stopRealtimePreview(); stopPlayer(); super.onDestroy() }
     companion object { private const val REQUEST_OPEN = 10; private const val REQUEST_SAVE = 20 }
 }
 
