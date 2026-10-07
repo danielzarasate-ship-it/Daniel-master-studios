@@ -133,17 +133,6 @@ class MainActivity : Activity() {
         livePreviewButton.setOnClickListener { toggleLivePreview() }
         originalButton.setOnClickListener { togglePreview(false) }
         masterPreviewButton.setOnClickListener { togglePreview(true) }
-        val previewBars = listOf(voiceClarity, voiceAir, beatBass, beatBrightness)
-        previewBars.forEach { bar ->
-            bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onStartTrackingTouch(s: SeekBar) {}
-                override fun onStopTrackingTouch(s: SeekBar) {}
-                override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
-                    if (fromUser && livePreviewEnabled) scheduleLivePreview()
-                }
-            })
-        }
-
         seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onStartTrackingTouch(s: SeekBar) { userSeeking = true }
             override fun onStopTrackingTouch(s: SeekBar) { userSeeking = false; player?.let { if (it.duration > 0) it.seekTo((it.duration * s.progress) / 1000) } }
@@ -158,7 +147,7 @@ class MainActivity : Activity() {
         bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onStartTrackingTouch(s: SeekBar) {}
             override fun onStopTrackingTouch(s: SeekBar) {}
-            override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) { label.text = name + "  " + p + "%" }
+            override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) { label.text = name + "  " + p + "%"; if (fromUser && livePreviewEnabled) scheduleLivePreview() }
         })
         row.addView(label); row.addView(bar); parent.addView(row); return bar
     }
